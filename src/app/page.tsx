@@ -86,8 +86,8 @@ function Sidebar() {
             <div className="flex items-start gap-3 px-10 md:px-[var(--pad)]">
                 <div className="font-ui text-[18px]">House of</div>
                 <Image
-                    src="/hob_logo.png"
-                    alt="hob_logo"
+                    src="/logo.png"
+                    alt="BORDERLESS"
                     width={200}
                     height={200}
                     className="w-[200px] md:w-[200px] -mt-2 ml-auto md:ml-5 md:mr-0"
@@ -363,13 +363,10 @@ export default function Page() {
     const lightboxClampGuardRef = useRef(false);
     const totalPhotos = PHOTOS.length;
     const lightboxGestureLockRef = useRef<number>(0);
-    const scrollLockRef = useRef<
-        | {
-              top: number;
-              style: { position: string; top: string; width: string; overflow: string };
-          }
-        | null
-    >(null);
+    const scrollLockRef = useRef<{
+        top: number;
+        style: { position: string; top: string; width: string; overflow: string };
+    } | null>(null);
 
     useEffect(() => {
         lightboxLastIdxRef.current = lightboxIdx;
