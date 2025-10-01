@@ -491,7 +491,7 @@ export default function Page() {
             >
                 <TopNav active={tab} mounted={true} onGoto={setTab} />
 
-                <div className="flex-1 pb-content safe-bottom">
+                <div className="flex-1 pb-8 safe-bottom">
                     <div className="px-6 sm:px-8">
                         <FadeMount key={tab}>
                             {tab === "about" ? (
