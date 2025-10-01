@@ -86,7 +86,7 @@ function Sidebar() {
             <div className="flex items-start gap-3 px-10 md:px-[var(--pad)]">
                 <div className="font-ui text-[18px]">House of</div>
                 <Image
-                    src="/logo.png"
+                    src="/logo.svg"
                     alt="BORDERLESS"
                     width={200}
                     height={200}
