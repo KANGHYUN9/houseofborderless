@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   Swiper Core & Custom Fixes
+   ========================================================================== */
+
+/* Swiper core + modules 기본 스타일은 위에서 @import "swiper/css" 등으로 불러와야 함 */
+
+/* HiDPI 환경에서 서브픽셀로 다음 슬라이드 비치는 현상 방지 */
+.swiper,
+.swiper-wrapper,
+.swiper-slide {
+    backface-visibility: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.swiper {
+    overflow: hidden;
+    min-width: 0; /* flex/grid 내부에서 폭 튐 방지 */
+}
+
+.swiper-wrapper {
+    transform: translateZ(0); /* GPU 합성 레이어 강제 */
+}
+
+.swiper-slide {
+    height: 100%;
+    overflow: hidden; /* 다음 슬라이드 미세 노출 방지 */
+    box-sizing: border-box;
+    background: #fff; /* 라이트박스와 동일한 배경 */
+}
+
+/* 작은 뷰어/라이트박스에서 공통으로 적용할 강제 클래스 */
+.photo-swiper,
+.photo-swiper .swiper,
+.photo-swiper .swiper-wrapper {
+    height: 100%;
+    min-width: 0;
+}
+
+.photo-swiper .swiper-slide {
+    height: 100%;
+}
+
+/* Lightbox 전용: 이미지 중앙 정렬 */
+.lightbox-swiper,
+.lightbox-swiper .swiper,
+.lightbox-swiper .swiper-wrapper {
+    height: 100%;
+    max-width: 100%;
+}
+
+.lightbox-swiper .swiper-slide {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+}
+
+.lightbox-swiper img {
+    width: 100%;
+    height: 100%;
+}
+
+/* 이미지 드래그/선택 방지 (추가 안전) */
+img {
+    -webkit-user-drag: none;
+    user-select: none;
+}
+
+/* ==========================================================================
+   Typography / UI Fonts
+   ========================================================================== */
+
+.font-ui {
+    font-family: var(--font-ui), var(--font-kor), serif !important;
+    font-weight: 400;
+}
+.font-ui-bold {
+    font-family: var(--font-ui), var(--font-kor), serif !important;
+    font-weight: 700;
+}
+
+html,
+body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* ==========================================================================
+   Animations
+   ========================================================================== */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* ==========================================================================
+   Utilities
+   ========================================================================== */
+@layer utilities {
+    /* iOS etc. 안전 영역 */
+    .safe-bottom {
+        padding-bottom: max(env(safe-area-inset-bottom), 0px);
+    }
+
+    /* 컨텐츠-푸터 간격: 세로/가로 별로 다르게 */
+    @media (orientation: portrait) {
+        .pb-content {
+            /* 높이가 넉넉한 세로 화면: 여유 있게 */
+            padding-bottom: clamp(3rem, 12vh, 8rem);
+        }
+    }
+    @media (orientation: landscape) {
+        .pb-content {
+            /* 높이가 낮은 가로 화면: 붙지 않게만 */
+            padding-bottom: clamp(1rem, 6vh, 3rem);
+        }
+    }
+}
