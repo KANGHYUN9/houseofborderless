@@ -26,9 +26,9 @@ const ui = localFont({
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
     return (
-        <html lang="ko" className={`${kor.variable} ${ui.variable} overscroll-none`}>
+        <html lang="ko" className={`${kor.variable} ${ui.variable}`}>
             {/* 기본은 HY (본문 전체). UI 글자는 .font-ui/.font-ui-bold로 오버라이드 */}
-            <body className="min-h-screen bg-white text-neutral-900 overscroll-none" style={{ fontFamily: "var(--font-kor), serif", fontWeight: 700 }}>
+            <body className="min-h-screen bg-white text-neutral-900" style={{ fontFamily: "var(--font-kor), serif", fontWeight: 700 }}>
                 {children}
             </body>
         </html>

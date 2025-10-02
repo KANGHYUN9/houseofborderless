@@ -36,16 +36,22 @@ function getShortestLoopDelta(prev: number, next: number, total: number) {
 
 /* ------------------------ Swiper tuning constants ------------------------ */
 const SWIPER_TUNING = {
-    speed: 300, // animation duration; slower values feel heavier
-    threshold: 36, // minimum finger movement in px to avoid accidental swipes
-    touchRatio: 0.6, // movement ratio between finger and slide (lower is less sensitive)
-    longSwipesRatio: 0.35, // required distance for a long swipe, tuned for weightier gestures
-    resistanceRatio: 0.8, // edge resistance
+    speed: 480, // transition animation duration (ms). ~480ms feels smooth and weighty without being sluggish
+    threshold: 70, // minimum swipe distance (px) required to trigger a slide. Lower = easier to swipe
+    touchRatio: 0.4, // ratio between finger movement and slide movement. Higher = more responsive, lower = heavier
+    longSwipesRatio: 1.2, // how far the user must swipe (relative to slide width) to trigger a long swipe
+    longSwipesMs: 220, // maximum duration (ms) of a swipe gesture to be considered a "long swipe"
+    resistance: true, // enable edge resistance when swiping past the first/last slide
+    resistanceRatio: 0.72, // how strong the edge resistance feels (0 = no resistance, 1 = very strong)
+    followFinger: true, // whether the slide follows the finger during drag
+    shortSwipes: true, // allow short quick swipes to trigger slide changes
+    simulateTouch: true, // allow mouse events to simulate touch interactions
     mousewheel: {
-        forceToAxis: true, // reduce vertical scroll interference
-        releaseOnEdges: true, // hand off scrolling back to the page at edges
-        sensitivity: 0.3, // lower wheel and trackpad sensitivity
-        thresholdDelta: 40, // ignore tiny wheel deltas below this value
+        forceToAxis: true,
+        releaseOnEdges: true,
+        sensitivity: 3.0, // super light — even the tiniest swipe triggers
+        thresholdDelta: 5, // almost no movement needed
+        thresholdTime: 80, // very short cooldown, back-to-back swipes feel instant
     },
 } as const;
 const SWIPE_LOCK_MS = SWIPER_TUNING.speed + 180; // prevent more than one slide per gesture
@@ -64,9 +70,15 @@ type LoopingSwiperControls = {
 function useLoopingSwiper(total: number): LoopingSwiperControls {
     const [index, setIndexState] = useState(0);
     const swiperRef = useRef<SwiperType | null>(null);
+    const [attachedSwiper, setAttachedSwiper] = useState<SwiperType | null>(null);
     const lastRealIdxRef = useRef(0);
     const clampGuardRef = useRef(false);
     const gestureLockRef = useRef(0);
+    const totalRef = useRef(total);
+
+    useEffect(() => {
+        totalRef.current = total;
+    }, [total]);
 
     const setSyncedIndex = useCallback(
         (value: number) => {
@@ -142,8 +154,41 @@ function useLoopingSwiper(total: number): LoopingSwiperControls {
     );
 
     const attachSwiper = useCallback((swiper: SwiperType) => {
+        if (swiperRef.current === swiper) return;
         swiperRef.current = swiper;
+        setAttachedSwiper(swiper);
     }, []);
+
+    useEffect(() => {
+        if (!attachedSwiper) return;
+
+        const touchEndHandler = (swiper: SwiperType) => {
+            const totalSlides = totalRef.current;
+            if (!swiper || totalSlides <= 1) return;
+
+            const prev = lastRealIdxRef.current;
+            let target = prev;
+
+            if (swiper.swipeDirection === "next") {
+                target = (prev + 1) % totalSlides;
+            } else if (swiper.swipeDirection === "prev") {
+                target = (prev + totalSlides - 1) % totalSlides;
+            }
+
+            if (swiper.realIndex === target) return;
+
+            clampGuardRef.current = true;
+            gestureLockRef.current = Date.now() + SWIPE_LOCK_MS;
+            setSyncedIndex(target);
+            swiper.slideToLoop(target, SWIPER_TUNING.speed);
+        };
+
+        attachedSwiper.on("touchEnd", touchEndHandler);
+
+        return () => {
+            attachedSwiper.off("touchEnd", touchEndHandler);
+        };
+    }, [attachedSwiper, setSyncedIndex]);
 
     const slidePrev = useCallback(() => {
         swiperRef.current?.slidePrev();
@@ -264,6 +309,7 @@ function TopNav({ active, onGoto }: { active: Tab; onGoto: (t: Tab) => void }) {
                 className={[
                     "font-ui py-1 underline-offset-[6px]",
                     "text-[16px] md:text-[18px]",
+                    "cursor-pointer",
                     isActive ? "underline" : "hover:underline",
                 ].join(" ")}
                 aria-current={isActive ? "page" : undefined}
@@ -353,10 +399,18 @@ export function PhotosViewer({ onOpenLightbox }: { onOpenLightbox: (index: numbe
                         {controls.index + 1} of {total}
                     </span>
                     <div className="flex items-center gap-3">
-                        <button onClick={controls.slidePrev} aria-label="prev" className="p-2 hover:opacity-70 text-lg">
+                        <button
+                            onClick={controls.slidePrev}
+                            aria-label="prev"
+                            className="p-2 text-lg cursor-pointer transition-opacity hover:opacity-45"
+                        >
                             ‹
                         </button>
-                        <button onClick={controls.slideNext} aria-label="next" className="p-2 hover:opacity-70 text-lg">
+                        <button
+                            onClick={controls.slideNext}
+                            aria-label="next"
+                            className="p-2 text-lg cursor-pointer transition-opacity hover:opacity-45"
+                        >
                             ›
                         </button>
                     </div>
@@ -447,6 +501,21 @@ export default function Page() {
 
     useBodyScrollLock(lightboxOpen);
 
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const doc = document.documentElement;
+        const body = document.body;
+        const prevDocBehavior = doc.style.scrollBehavior;
+        const prevBodyBehavior = body.style.scrollBehavior;
+        doc.style.scrollBehavior = "smooth";
+        body.style.scrollBehavior = "smooth";
+
+        return () => {
+            doc.style.scrollBehavior = prevDocBehavior;
+            body.style.scrollBehavior = prevBodyBehavior;
+        };
+    }, []);
+
     if (!tab) {
         // Render a blank screen to avoid SSR flashes before mount
         return <div className="min-h-screen bg-white"></div>;
@@ -497,7 +566,6 @@ export default function Page() {
                 <div
                     className={`fixed inset-0 z-[999] bg-white/98 transition-opacity duration-300
   ${fadeState === "in" ? "opacity-100" : "opacity-0"}`}
-                    onClick={closeLightbox}
                     role="dialog"
                     aria-modal="true"
                 >
@@ -513,7 +581,7 @@ export default function Page() {
                                     lightboxSlidePrev();
                                 }}
                                 aria-label="prev"
-                                className="p-2 hover:opacity-80 text-[23px]"
+                                className="p-2 text-[23px] cursor-pointer transition-opacity hover:opacity-45"
                             >
                                 ‹
                             </button>
@@ -523,7 +591,7 @@ export default function Page() {
                                     lightboxSlideNext();
                                 }}
                                 aria-label="next"
-                                className="p-2 hover:opacity-80 text-[23px]"
+                                className="p-2 text-[23px] cursor-pointer transition-opacity hover:opacity-45"
                             >
                                 ›
                             </button>
@@ -533,7 +601,7 @@ export default function Page() {
                                     closeLightbox();
                                 }}
                                 aria-label="close"
-                                className="ml-2 p-2 hover:opacity-80 text-[20px]"
+                                className="ml-2 p-2 text-[20px] cursor-pointer transition-opacity hover:opacity-45"
                                 title="Close (Esc)"
                             >
                                 ✕
