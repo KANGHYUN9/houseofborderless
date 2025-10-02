@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import rawManifest from "@/photos.manifest.json";
 
-/* Swiper (pnpm add swiper) */
+/* Swiper (pnpm add swiper) test */
 import { Swiper, SwiperSlide } from "swiper/react";
 import { Keyboard, Mousewheel } from "swiper/modules";
 import "swiper/css"; // ensure Swiper's core layout styles are available
