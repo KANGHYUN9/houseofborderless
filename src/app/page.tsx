@@ -3,8 +3,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import rawManifest from "@/photos.manifest.json";
-
-/* Swiper (pnpm add swiper) test */
 import { Swiper, SwiperSlide } from "swiper/react";
 import { Keyboard, Mousewheel } from "swiper/modules";
 import "swiper/css"; // ensure Swiper's core layout styles are available
@@ -36,21 +34,178 @@ function getShortestLoopDelta(prev: number, next: number, total: number) {
     return diff;
 }
 
-/* ------------------------ Swiper 감도/동작 튜닝 상수 ------------------------ */
+/* ------------------------ Swiper tuning constants ------------------------ */
 const SWIPER_TUNING = {
-    speed: 300, // 커밋 애니메이션 속도(느릴수록 묵직)
-    threshold: 36, // 손가락 최소 이동(px) — 실수 스와이프 방지
-    touchRatio: 0.6, // 손가락 이동 대비 슬라이드 이동량(낮을수록 둔감)
-    longSwipesRatio: 0.35, // 긴 스와이프 요구량(기본 0.5 → 더 묵직)
-    resistanceRatio: 0.8, // 끝단 탄성
+    speed: 300, // animation duration; slower values feel heavier
+    threshold: 36, // minimum finger movement in px to avoid accidental swipes
+    touchRatio: 0.6, // movement ratio between finger and slide (lower is less sensitive)
+    longSwipesRatio: 0.35, // required distance for a long swipe, tuned for weightier gestures
+    resistanceRatio: 0.8, // edge resistance
     mousewheel: {
-        forceToAxis: true, // 세로 스크롤 간섭 최소화
-        releaseOnEdges: true, // 끝에서 페이지 스크롤로 자연스럽게 풀기
-        sensitivity: 0.3, // 휠/트랙패드 민감도 낮춤
-        thresholdDelta: 40, // 이 미만의 미세 델타 무시
+        forceToAxis: true, // reduce vertical scroll interference
+        releaseOnEdges: true, // hand off scrolling back to the page at edges
+        sensitivity: 0.3, // lower wheel and trackpad sensitivity
+        thresholdDelta: 40, // ignore tiny wheel deltas below this value
     },
 } as const;
-const SWIPE_LOCK_MS = SWIPER_TUNING.speed + 180; // 한 번의 제스처 동안 2장 이상 이동 방지
+const SWIPE_LOCK_MS = SWIPER_TUNING.speed + 180; // prevent more than one slide per gesture
+
+type LoopingSwiperControls = {
+    index: number;
+    setIndex: (value: number) => void;
+    attachSwiper: (swiper: SwiperType) => void;
+    handleSlideChange: (swiper: SwiperType) => void;
+    slidePrev: () => void;
+    slideNext: () => void;
+    slideTo: (target: number, speed?: number) => void;
+    resetLock: () => void;
+};
+
+function useLoopingSwiper(total: number): LoopingSwiperControls {
+    const [index, setIndexState] = useState(0);
+    const swiperRef = useRef<SwiperType | null>(null);
+    const lastRealIdxRef = useRef(0);
+    const clampGuardRef = useRef(false);
+    const gestureLockRef = useRef(0);
+
+    const setSyncedIndex = useCallback(
+        (value: number) => {
+            const limit = Math.max(0, total);
+            if (limit <= 0) {
+                lastRealIdxRef.current = 0;
+                setIndexState(0);
+                return;
+            }
+            const normalized = ((value % limit) + limit) % limit;
+            lastRealIdxRef.current = normalized;
+            setIndexState(normalized);
+        },
+        [total]
+    );
+
+    useEffect(() => {
+        if (total <= 0) {
+            lastRealIdxRef.current = 0;
+            setIndexState(0);
+            return;
+        }
+        if (index >= total) {
+            setSyncedIndex(total - 1);
+        }
+    }, [index, setSyncedIndex, total]);
+
+    const handleSlideChange = useCallback(
+        (sw: SwiperType) => {
+            const now = Date.now();
+            if (gestureLockRef.current && now < gestureLockRef.current) {
+                clampGuardRef.current = true;
+                sw.slideToLoop(lastRealIdxRef.current, SWIPER_TUNING.speed);
+                return;
+            }
+
+            if (total <= 1) {
+                setSyncedIndex(sw.realIndex);
+                return;
+            }
+
+            if (clampGuardRef.current) {
+                clampGuardRef.current = false;
+                setSyncedIndex(sw.realIndex);
+                return;
+            }
+
+            const prev = lastRealIdxRef.current;
+            const next = sw.realIndex;
+            const diff = getShortestLoopDelta(prev, next, total);
+
+            if (Math.abs(diff) > 1) {
+                const direction = diff > 0 ? 1 : -1;
+                const target = (prev + direction + total) % total;
+                clampGuardRef.current = true;
+                setSyncedIndex(target);
+                sw.slideToLoop(target, SWIPER_TUNING.speed);
+                gestureLockRef.current = now + SWIPE_LOCK_MS;
+                if (typeof sw.once === "function") {
+                    sw.once("transitionEnd", () => {
+                        gestureLockRef.current = 0;
+                    });
+                } else {
+                    window.setTimeout(() => {
+                        gestureLockRef.current = 0;
+                    }, SWIPER_TUNING.speed + 50);
+                }
+            } else {
+                setSyncedIndex(next);
+            }
+        },
+        [setSyncedIndex, total]
+    );
+
+    const attachSwiper = useCallback((swiper: SwiperType) => {
+        swiperRef.current = swiper;
+    }, []);
+
+    const slidePrev = useCallback(() => {
+        swiperRef.current?.slidePrev();
+    }, []);
+
+    const slideNext = useCallback(() => {
+        swiperRef.current?.slideNext();
+    }, []);
+
+    const slideTo = useCallback(
+        (target: number, speed: number = SWIPER_TUNING.speed) => {
+            setSyncedIndex(target);
+            const swiper = swiperRef.current;
+            if (!swiper) return;
+            swiper.slideToLoop(lastRealIdxRef.current, speed);
+        },
+        [setSyncedIndex]
+    );
+
+    const resetLock = useCallback(() => {
+        clampGuardRef.current = false;
+        gestureLockRef.current = 0;
+    }, []);
+
+    return {
+        index,
+        setIndex: setSyncedIndex,
+        attachSwiper,
+        handleSlideChange,
+        slidePrev,
+        slideNext,
+        slideTo,
+        resetLock,
+    };
+}
+
+function useBodyScrollLock(locked: boolean) {
+    useEffect(() => {
+        if (typeof window === "undefined" || !locked) return;
+        const body = document.body;
+        const stored = {
+            position: body.style.position,
+            top: body.style.top,
+            width: body.style.width,
+            overflow: body.style.overflow,
+        };
+        const top = window.scrollY;
+
+        body.style.position = "fixed";
+        body.style.top = `-${top}px`;
+        body.style.width = "100%";
+        body.style.overflow = "hidden";
+
+        return () => {
+            body.style.position = stored.position;
+            body.style.top = stored.top;
+            body.style.width = stored.width;
+            body.style.overflow = stored.overflow;
+            window.scrollTo(0, top);
+        };
+    }, [locked]);
+}
 
 /* --------------------------------- Tabs ---------------------------------- */
 type Tab = "about" | "photos";
@@ -62,7 +217,7 @@ function useHashTab(): [Tab | null, (t: Tab) => void] {
         const h = window.location.hash.replace("#", "");
         return (h === "about" || h === "photos" ? h : DEFAULT_TAB) as Tab;
     };
-    // SSR 깜빡임 방지: 초기 null
+    // Initialize to null to avoid SSR flash
     const [tab, setTab] = useState<Tab | null>(null);
 
     useEffect(() => {
@@ -100,9 +255,9 @@ function Sidebar() {
 }
 
 /* ------------------------------- Top Navigation -------------------------- */
-function TopNav({ active, mounted, onGoto }: { active: Tab; mounted: boolean; onGoto: (t: Tab) => void }) {
+function TopNav({ active, onGoto }: { active: Tab; onGoto: (t: Tab) => void }) {
     const LinkBtn = ({ t, label }: { t: Tab; label: string }) => {
-        const isActive = mounted && active === t;
+        const isActive = active === t;
         return (
             <button
                 onClick={() => onGoto(t)}
@@ -164,81 +319,12 @@ function AboutContent() {
 }
 
 /* ------------------------------ Photos Viewer ---------------------------- */
-/** 작은 포토뷰어: 16:10 박스(object-cover) 유지 + Swiper 적용 */
-export function PhotosViewer({
-    over = 160,
-    gutter = 24,
-    onOpenLightbox,
-}: {
-    over?: number;
-    gutter?: number;
-    onOpenLightbox: (index: number) => void;
-}) {
+/** Compact photo viewer that keeps a 16:10 box with Swiper */
+export function PhotosViewer({ onOpenLightbox }: { onOpenLightbox: (index: number) => void }) {
     const total = PHOTOS.length;
-    const [idx, setIdx] = useState(0);
+    const controls = useLoopingSwiper(total);
 
-    // 버튼 제어용 Swiper ref
-    const swiperRef = useRef<SwiperType | null>(null);
-    const lastRealIdxRef = useRef(0);
-    const clampGuardRef = useRef(false);
-    const gestureLockRef = useRef<number>(0);
-
-    useEffect(() => {
-        lastRealIdxRef.current = idx;
-    }, [idx]);
-
-    const handleSlideChange = useCallback(
-        (sw: SwiperType) => {
-            const now = Date.now();
-            if (gestureLockRef.current && now < gestureLockRef.current) {
-                clampGuardRef.current = true;
-                sw.slideToLoop(lastRealIdxRef.current, SWIPER_TUNING.speed);
-                return;
-            }
-
-            if (total <= 1) {
-                setIdx(sw.realIndex);
-                lastRealIdxRef.current = sw.realIndex;
-                return;
-            }
-
-            if (clampGuardRef.current) {
-                clampGuardRef.current = false;
-                setIdx(sw.realIndex);
-                lastRealIdxRef.current = sw.realIndex;
-                return;
-            }
-
-            const prev = lastRealIdxRef.current;
-            const next = sw.realIndex;
-            const diff = getShortestLoopDelta(prev, next, total);
-
-            if (Math.abs(diff) > 1) {
-                const direction = diff > 0 ? 1 : -1;
-                const target = (prev + direction + total) % total;
-                clampGuardRef.current = true;
-                lastRealIdxRef.current = target;
-                setIdx(target);
-                sw.slideToLoop(target, SWIPER_TUNING.speed);
-                gestureLockRef.current = now + SWIPE_LOCK_MS;
-                if (typeof sw.once === "function") {
-                    sw.once("transitionEnd", () => {
-                        gestureLockRef.current = 0;
-                    });
-                } else {
-                    window.setTimeout(() => {
-                        gestureLockRef.current = 0;
-                    }, SWIPER_TUNING.speed + 50);
-                }
-            } else {
-                lastRealIdxRef.current = next;
-                setIdx(next);
-            }
-        },
-        [total]
-    );
-
-    // 사진 없음 처리
+    // Handle empty photo manifests
     if (total === 0) {
         return (
             <section className="w-full">
@@ -249,7 +335,7 @@ export function PhotosViewer({
         );
     }
 
-    const openLightbox = () => onOpenLightbox(idx);
+    const openLightbox = () => onOpenLightbox(controls.index);
 
     return (
         <section className="w-full mt-10 md:mt-25">
@@ -261,53 +347,48 @@ export function PhotosViewer({
                     "ml-auto",
                 ].join(" ")}
             >
-                {/* 상단 컨트롤 */}
+                {/* Top controls */}
                 <div className="flex items-center justify-between text-[14px] text-black mb-2 select-none">
                     <span>
-                        {idx + 1} of {total}
+                        {controls.index + 1} of {total}
                     </span>
                     <div className="flex items-center gap-3">
-                        <button onClick={() => swiperRef.current?.slidePrev()} aria-label="prev" className="p-2 hover:opacity-70 text-lg">
+                        <button onClick={controls.slidePrev} aria-label="prev" className="p-2 hover:opacity-70 text-lg">
                             ‹
                         </button>
-                        <button onClick={() => swiperRef.current?.slideNext()} aria-label="next" className="p-2 hover:opacity-70 text-lg">
+                        <button onClick={controls.slideNext} aria-label="next" className="p-2 hover:opacity-70 text-lg">
                             ›
                         </button>
                     </div>
                 </div>
 
-                {/* Swiper 프레임: 16:10 + cover */}
+                {/* Swiper frame maintains 16:10 cover layout */}
                 <div className="relative w-full aspect-[16/10] max-h-[72vh] border border-neutral-300 overflow-hidden bg-white min-w-0">
                     <Swiper
                         modules={[Keyboard, Mousewheel]}
                         className="h-full w-full"
-                        onSwiper={(sw) => (swiperRef.current = sw)}
-                        /* ==== 민감도/한 장씩만 넘김(트랙패드 포함) ==== */
-                        speed={300}
-                        threshold={36}
-                        touchRatio={0.6}
-                        longSwipesRatio={0.35}
-                        resistanceRatio={0.8}
+                        onSwiper={controls.attachSwiper}
+                        speed={SWIPER_TUNING.speed}
+                        threshold={SWIPER_TUNING.threshold}
+                        touchRatio={SWIPER_TUNING.touchRatio}
+                        longSwipesRatio={SWIPER_TUNING.longSwipesRatio}
+                        resistanceRatio={SWIPER_TUNING.resistanceRatio}
                         freeMode={false}
                         slidesPerView={1}
                         centeredSlides={false}
                         mousewheel={{
-                            forceToAxis: true,
-                            releaseOnEdges: true,
-                            sensitivity: 0.3,
-                            thresholdDelta: 50, // 관성으로 두 장씩 점프 방지
+                            ...SWIPER_TUNING.mousewheel,
+                            thresholdDelta: 50, // avoid inertial double-slide jumps
                         }}
-                        /* ==== 슬라이드 간 간격 (틈 보임 방지에도 효과) ==== */
                         spaceBetween={0}
-                        /* ==== UX ==== */
                         grabCursor
                         keyboard={{ enabled: true, onlyInViewport: true }}
                         loop={true}
                         observer
                         observeParents
-                        /* 상태 동기화 */
-                        initialSlide={idx}
-                        onSlideChange={handleSlideChange}
+                        /* Keep React state aligned with Swiper */
+                        initialSlide={controls.index}
+                        onSlideChange={controls.handleSlideChange}
                     >
                         {PHOTOS.map((p, i) => (
                             <SwiperSlide key={p.src ?? i} className="relative h-full">
@@ -350,131 +431,38 @@ function LightboxKeyHandler({ onPrev, onNext, onClose }: { onPrev: () => void; o
 /* --------------------------------- Page ---------------------------------- */
 export default function Page() {
     const [tab, setTab] = useHashTab();
-    const [mounted, setMounted] = useState(false);
-
-    // 라이트박스 상태
     const [lightboxOpen, setLightboxOpen] = useState(false);
-    const [lightboxIdx, setLightboxIdx] = useState<number>(0);
     const [fadeState, setFadeState] = useState<"in" | "out">("in");
 
-    // 라이트박스용 Swiper ref
-    const lightboxSwiperRef = useRef<SwiperType | null>(null);
-    const lightboxLastIdxRef = useRef(0);
-    const lightboxClampGuardRef = useRef(false);
     const totalPhotos = PHOTOS.length;
-    const lightboxGestureLockRef = useRef<number>(0);
-    const scrollLockRef = useRef<{
-        top: number;
-        style: { position: string; top: string; width: string; overflow: string };
-    } | null>(null);
+    const {
+        index: lightboxIdx,
+        setIndex: setLightboxIndex,
+        attachSwiper: attachLightboxSwiper,
+        handleSlideChange: handleLightboxSlideChange,
+        slidePrev: lightboxSlidePrev,
+        slideNext: lightboxSlideNext,
+        resetLock: resetLightboxLock,
+    } = useLoopingSwiper(totalPhotos);
 
-    useEffect(() => {
-        lightboxLastIdxRef.current = lightboxIdx;
-    }, [lightboxIdx]);
-
-    const handleLightboxSlideChange = useCallback(
-        (sw: SwiperType) => {
-            const now = Date.now();
-            if (lightboxGestureLockRef.current && now < lightboxGestureLockRef.current) {
-                lightboxClampGuardRef.current = true;
-                sw.slideToLoop(lightboxLastIdxRef.current, SWIPER_TUNING.speed);
-                return;
-            }
-
-            if (totalPhotos <= 1) {
-                setLightboxIdx(sw.realIndex);
-                lightboxLastIdxRef.current = sw.realIndex;
-                return;
-            }
-
-            if (lightboxClampGuardRef.current) {
-                lightboxClampGuardRef.current = false;
-                setLightboxIdx(sw.realIndex);
-                lightboxLastIdxRef.current = sw.realIndex;
-                return;
-            }
-
-            const prev = lightboxLastIdxRef.current;
-            const next = sw.realIndex;
-            const diff = getShortestLoopDelta(prev, next, totalPhotos);
-
-            if (Math.abs(diff) > 1) {
-                const direction = diff > 0 ? 1 : -1;
-                const target = (prev + direction + totalPhotos) % totalPhotos;
-                lightboxClampGuardRef.current = true;
-                lightboxLastIdxRef.current = target;
-                setLightboxIdx(target);
-                sw.slideToLoop(target, SWIPER_TUNING.speed);
-                lightboxGestureLockRef.current = now + SWIPE_LOCK_MS;
-                if (typeof sw.once === "function") {
-                    sw.once("transitionEnd", () => {
-                        lightboxGestureLockRef.current = 0;
-                    });
-                } else {
-                    window.setTimeout(() => {
-                        lightboxGestureLockRef.current = 0;
-                    }, SWIPER_TUNING.speed + 50);
-                }
-            } else {
-                lightboxLastIdxRef.current = next;
-                setLightboxIdx(next);
-            }
-        },
-        [setLightboxIdx, totalPhotos]
-    );
-
-    useEffect(() => setMounted(true), []);
-
-    useEffect(() => {
-        if (typeof window === "undefined") return;
-        const body = document.body;
-
-        if (lightboxOpen) {
-            const currentTop = window.scrollY;
-            scrollLockRef.current = {
-                top: currentTop,
-                style: {
-                    position: body.style.position,
-                    top: body.style.top,
-                    width: body.style.width,
-                    overflow: body.style.overflow,
-                },
-            };
-
-            body.style.position = "fixed";
-            body.style.top = `-${currentTop}px`;
-            body.style.width = "100%";
-            body.style.overflow = "hidden";
-
-            return () => {
-                const stored = scrollLockRef.current;
-                if (!stored) return;
-                body.style.position = stored.style.position;
-                body.style.top = stored.style.top;
-                body.style.width = stored.style.width;
-                body.style.overflow = stored.style.overflow;
-                window.scrollTo(0, stored.top);
-                scrollLockRef.current = null;
-            };
-        }
-
-        const stored = scrollLockRef.current;
-        if (!stored) return;
-        body.style.position = stored.style.position;
-        body.style.top = stored.style.top;
-        body.style.width = stored.style.width;
-        body.style.overflow = stored.style.overflow;
-        window.scrollTo(0, stored.top);
-        scrollLockRef.current = null;
-    }, [lightboxOpen]);
+    useBodyScrollLock(lightboxOpen);
 
     if (!tab) {
-        // 마운트 전 빈 화면으로 SSR 깜빡임 방지
+        // Render a blank screen to avoid SSR flashes before mount
         return <div className="min-h-screen bg-white"></div>;
     }
 
+    const openLightbox = (index: number) => {
+        resetLightboxLock();
+        setLightboxIndex(index);
+        setFadeState("out");
+        setLightboxOpen(true);
+        requestAnimationFrame(() => setFadeState("in"));
+    };
+
     const closeLightbox = () => {
         setFadeState("out");
+        resetLightboxLock();
         setTimeout(() => setLightboxOpen(false), 300);
     };
 
@@ -489,25 +477,12 @@ export default function Page() {
                     "lg:pr-6 md:pr-12",
                 ].join(" ")}
             >
-                <TopNav active={tab} mounted={true} onGoto={setTab} />
+                <TopNav active={tab} onGoto={setTab} />
 
                 <div className="flex-1 pb-8 safe-bottom">
                     <div className="px-6 sm:px-8">
                         <FadeMount key={tab}>
-                            {tab === "about" ? (
-                                <AboutContent />
-                            ) : (
-                                <PhotosViewer
-                                    onOpenLightbox={(i) => {
-                                        setLightboxIdx(i);
-                                        lightboxLastIdxRef.current = i;
-                                        lightboxGestureLockRef.current = 0;
-                                        setFadeState("out");
-                                        setLightboxOpen(true);
-                                        requestAnimationFrame(() => setFadeState("in"));
-                                    }}
-                                />
-                            )}
+                            {tab === "about" ? <AboutContent /> : <PhotosViewer onOpenLightbox={openLightbox} />}
                         </FadeMount>
                     </div>
                 </div>
@@ -526,7 +501,7 @@ export default function Page() {
                     role="dialog"
                     aria-modal="true"
                 >
-                    {/* 상단 컨트롤 (원래 위치 유지) */}
+                    {/* Top controls remain anchored */}
                     <div className="absolute top-0 left-0 right-0 z-10 h-[64px] flex items-center justify-between px-6 text-black text-[16px] select-none">
                         <span>
                             {lightboxIdx + 1} of {totalPhotos}
@@ -535,7 +510,7 @@ export default function Page() {
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    lightboxSwiperRef.current?.slidePrev();
+                                    lightboxSlidePrev();
                                 }}
                                 aria-label="prev"
                                 className="p-2 hover:opacity-80 text-[23px]"
@@ -545,7 +520,7 @@ export default function Page() {
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    lightboxSwiperRef.current?.slideNext();
+                                    lightboxSlideNext();
                                 }}
                                 aria-label="next"
                                 className="p-2 hover:opacity-80 text-[23px]"
@@ -566,14 +541,10 @@ export default function Page() {
                         </div>
                     </div>
 
-                    {/* 키보드 내비 */}
-                    <LightboxKeyHandler
-                        onPrev={() => lightboxSwiperRef.current?.slidePrev()}
-                        onNext={() => lightboxSwiperRef.current?.slideNext()}
-                        onClose={closeLightbox}
-                    />
+                    {/* Keyboard navigation */}
+                    <LightboxKeyHandler onPrev={lightboxSlidePrev} onNext={lightboxSlideNext} onClose={closeLightbox} />
 
-                    {/* ✅ 컨텐츠 래퍼: 상단바 높이만큼 패딩 → 남은 영역을 Swiper가 꽉 채움 */}
+                    {/* Content wrapper leaves room for the header so Swiper fills the rest */}
                     <div
                         className="absolute inset-0 pt-[64px] pb-[24px] px-4 pointer-events-none"
                         style={{
@@ -581,9 +552,9 @@ export default function Page() {
                             paddingBottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
                         }}
                     >
-                        {/* 가운데 정렬 래퍼 */}
+                        {/* Center the viewer */}
                         <div className="w-full h-full grid place-items-center pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-                            {/* ⬇️ 여기서 정확한 높이를 계산해 Swiper에 h-full 전달 */}
+                            {/* Provide an explicit height so Swiper can fill it */}
                             <div
                                 className="lightbox-swiper w-full h-full min-w-0"
                                 style={{
@@ -593,9 +564,8 @@ export default function Page() {
                             >
                                 <Swiper
                                     modules={[Keyboard, Mousewheel]}
-                                    className="w-full h-full" // ⬅️ h-full만
-                                    onSwiper={(sw) => (lightboxSwiperRef.current = sw)}
-                                    /* 민감도/한장씩 */
+                                    className="w-full h-full" // ensure Swiper stretches to available height
+                                    onSwiper={attachLightboxSwiper}
                                     speed={SWIPER_TUNING.speed}
                                     threshold={SWIPER_TUNING.threshold}
                                     touchRatio={SWIPER_TUNING.touchRatio}
@@ -605,15 +575,13 @@ export default function Page() {
                                     slidesPerView={1}
                                     slidesPerGroup={1}
                                     centeredSlides={false}
-                                    /* 다음 슬라이드 비침 방지 */
+                                    /* Prevent the next slide from bleeding through */
                                     spaceBetween={0}
                                     roundLengths={true}
                                     loop={true}
                                     loopAdditionalSlides={2}
                                     mousewheel={{
-                                        forceToAxis: true,
-                                        releaseOnEdges: true,
-                                        sensitivity: 0.3,
+                                        ...SWIPER_TUNING.mousewheel,
                                         thresholdDelta: 50,
                                     }}
                                     observer
@@ -654,5 +622,5 @@ function FadeMount({ children }: { children: React.ReactNode }) {
         const id = requestAnimationFrame(() => setShow(true));
         return () => cancelAnimationFrame(id);
     }, []);
-    return <div className={["transition-opacity duration-500", show ? "opacity-100" : "opacity-0"].join(" ")}>{children}</div>;
+    return <div className={["transition-opacity duration-800", show ? "opacity-100" : "opacity-0"].join(" ")}>{children}</div>;
 }
