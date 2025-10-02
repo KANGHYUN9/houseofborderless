@@ -167,15 +167,13 @@ function useLoopingSwiper(total: number): LoopingSwiperControls {
             if (!swiper || totalSlides <= 1) return;
 
             const prev = lastRealIdxRef.current;
-            let target = prev;
+            const current = swiper.realIndex;
+            const diff = getShortestLoopDelta(prev, current, totalSlides);
 
-            if (swiper.swipeDirection === "next") {
-                target = (prev + 1) % totalSlides;
-            } else if (swiper.swipeDirection === "prev") {
-                target = (prev + totalSlides - 1) % totalSlides;
-            }
+            if (Math.abs(diff) <= 1) return;
 
-            if (swiper.realIndex === target) return;
+            const direction = diff > 0 ? 1 : -1;
+            const target = (prev + direction + totalSlides) % totalSlides;
 
             clampGuardRef.current = true;
             gestureLockRef.current = Date.now() + SWIPE_LOCK_MS;
