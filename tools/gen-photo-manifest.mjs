@@ -1,29 +1,54 @@
-import fs from "node:fs/promises";
+// tools/gen-photo-manifest.mjs
+import { promises as fs } from "node:fs";
 import path from "node:path";
+import glob from "fast-glob";
 import sharp from "sharp";
 
-const photosDir = path.resolve(process.cwd(), "public/photos");
-const outFile = path.resolve(process.cwd(), "src/photos.manifest.json");
+const PUBLIC_DIR = path.join(process.cwd(), "public");
+const BASE_DIR = "photos"; // public/photos
+const OUT = path.join(process.cwd(), "src/photos.manifest.json");
 
-const exts = /\.(jpe?g|png|webp|avif)$/i;
+// 허용 확장자 (대소문자/HEIC 포함)
+const exts = ["jpg", "jpeg", "png", "webp", "avif", "gif", "heic", "heif"];
+const pattern = `${PUBLIC_DIR}/${BASE_DIR}/**/*.{${exts.join(",")}}`;
 
-const files = (await fs.readdir(photosDir)).filter((f) => exts.test(f)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-
-const items = [];
-for (const name of files) {
-    const src = `/photos/${name}`;
-    const abs = path.join(photosDir, name);
-
-    const meta = await sharp(abs).metadata();
-    const width = meta.width ?? 0;
-    const height = meta.height ?? 0;
-
-    // 아주 작은 블러 썸네일 생성(너비 16px) → base64 data URL
-    const blurBuf = await sharp(abs).resize(16).jpeg({ quality: 50 }).toBuffer();
-    const blurDataURL = `data:image/jpeg;base64,${blurBuf.toString("base64")}`;
-
-    items.push({ src, width, height, blurDataURL });
+function toPublicPath(abs) {
+    const rel = path.relative(PUBLIC_DIR, abs).split(path.sep).join("/");
+    return rel.startsWith("/") ? `/${rel}` : `/${rel}`;
 }
 
-await fs.writeFile(outFile, JSON.stringify(items, null, 2));
-console.log(`✅ Wrote ${items.length} items → ${path.relative(process.cwd(), outFile)}`);
+async function getSize(abs) {
+    try {
+        const meta = await sharp(abs).metadata();
+        if (!meta.width || !meta.height) throw new Error("no dimension");
+        return { width: meta.width, height: meta.height };
+    } catch (err) {
+        console.warn("⚠️ Skip:", path.basename(abs), "-", err.message);
+        return null;
+    }
+}
+
+async function main() {
+    const files = await glob(pattern, { caseSensitiveMatch: false, onlyFiles: true });
+    console.log(`Found ${files.length} files under public/${BASE_DIR}`);
+
+    const items = [];
+    for (const abs of files) {
+        const size = await getSize(abs);
+        if (!size) continue;
+        items.push({
+            src: toPublicPath(abs),
+            width: size.width,
+            height: size.height,
+        });
+    }
+
+    items.sort((a, b) => a.src.localeCompare(b.src, "en"));
+    await fs.writeFile(OUT, JSON.stringify(items, null, 2));
+    console.log(`✅ Wrote ${items.length} items → ${path.relative(process.cwd(), OUT)}`);
+}
+
+main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+});

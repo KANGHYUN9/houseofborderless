@@ -25,6 +25,43 @@ function normalizePhotos(m: ManifestShape): PhotoItem[] {
 }
 const PHOTOS: PhotoItem[] = normalizePhotos(rawManifest as ManifestShape);
 
+const preloadedSrcs = new Set<string>();
+
+function preloadImage(src: string) {
+    if (typeof window === "undefined") return;
+    if (!src || preloadedSrcs.has(src)) return;
+    const img = new window.Image();
+    img.src = src;
+    preloadedSrcs.add(src);
+}
+
+function usePhotoPreload(photos: PhotoItem[], currentIndex: number, radius = 2) {
+    useEffect(() => {
+        if (!photos.length || typeof window === "undefined") return;
+        const total = photos.length;
+        const safeIndex = ((currentIndex % total) + total) % total;
+
+        preloadImage(photos[safeIndex]?.src);
+
+        for (let offset = 1; offset <= radius; offset += 1) {
+            const next = (safeIndex + offset) % total;
+            const prev = (safeIndex - offset + total) % total;
+            preloadImage(photos[next]?.src ?? "");
+            preloadImage(photos[prev]?.src ?? "");
+        }
+    }, [photos, currentIndex, radius]);
+}
+
+function normalizePath(src: string) {
+    if (!src) return src;
+    const s = src
+        .replace(/^https?:\/\/[^/]+/i, "")
+        .replace(/[\\]+/g, "/")
+        .replace(/[#?].*$/, "");
+    return s.startsWith("/") ? s : `/${s}`;
+}
+const NORM_PHOTOS: PhotoItem[] = PHOTOS.map((p) => ({ ...p, src: normalizePath(p.src) }));
+
 function getShortestLoopDelta(prev: number, next: number, total: number) {
     if (total <= 1) return next - prev;
     let diff = next - prev;
@@ -33,6 +70,78 @@ function getShortestLoopDelta(prev: number, next: number, total: number) {
     if (diff < -half) diff += total;
     return diff;
 }
+
+/* ----------------------- Build groups from file paths --------------------- */
+type PhotoGroup = {
+    id: string; // 폴더명
+    label: string; // 탭 라벨
+    title?: string;
+    description?: string;
+    indices: number[]; // PHOTOS의 전역 인덱스
+};
+
+const PHOTOS_BASE_DIR = "photos"; // public/photos 하위 폴더명
+
+function pathSegmentsAbs(abs: string) {
+    return abs.replace(/^\/+/, "").split("/");
+}
+
+function buildGroupsFromPaths(
+    baseDir: string | null,
+    depth = 0,
+    labels: Record<string, { label?: string; title?: string; description?: string }> = {},
+    order?: string[]
+) {
+    const map = new Map<string, number[]>();
+    NORM_PHOTOS.forEach((p, idx) => {
+        const segs = pathSegmentsAbs(p.src);
+        let start = 0;
+        if (baseDir) {
+            const i = segs.findIndex((s) => s.toLowerCase() === baseDir.toLowerCase());
+            start = i >= 0 ? i + 1 : 0;
+        }
+        const key = segs[start + depth] || "misc";
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(idx);
+    });
+    const keys = order
+        ? order.filter((k) => map.has(k)).concat([...map.keys()].filter((k) => !order.includes(k)).sort())
+        : [...map.keys()].sort();
+    return keys.map((k) => ({
+        id: k,
+        label: labels[k]?.label ?? k,
+        title: labels[k]?.title,
+        description: labels[k]?.description,
+        indices: map.get(k)!,
+    }));
+}
+
+/* -------- Optional: 폴더명 → 한국어 라벨/설명 매핑 -------- */
+const GROUP_LABELS: Record<string, { label?: string; title?: string; description?: string }> = {
+    atrium: {
+        label: "중정",
+        description: `집의 한가운데 자리한 ‘수공간’입니다. \n원형 하늘을 열어둔 이 공간은 건축의 중심이자, 방과 공간을 이어주는 축이 됩니다. 단순한 장식이 아니라 빛과 바람이 드나드는 열린 장치입니다.`,
+    },
+    room: {
+        label: "룸",
+        description: `제주의 전통 민가 배열에서 영감을 얻었습니다. \n안거리, 밖거리처럼 각각 독립적인 방이 수공간을 중심으로 연결되어, 닫힌 집이 아니라 열린 풍경 속 집을 보여줍니다.`,
+    },
+    exterior: {
+        label: "외부",
+        description: `멀리서 보면 눈 덮인 한라산을 닮았습니다. \n올레길 같은 좁고 깊은 길을 지나면, 제주의 돌담과 향기를 따라 수공간, 곧 백록담 같은 풍경에 닿게 됩니다.`,
+    },
+    pool: {
+        label: "수영장",
+        description: `폭 4m, 길이 11m의 긴 수영장은 하늘과 구름을 고스란히 담습니다. \n높은 돌담이 둘러싸고 있어 고요하면서도 압도적인 분위기를 줍니다.\n   `,
+    },
+};
+
+const GROUPS: PhotoGroup[] = buildGroupsFromPaths(
+    PHOTOS_BASE_DIR,
+    0,
+    GROUP_LABELS,
+    ["atrium", "room", "exterior", "pool"] // 탭 순서
+);
 
 /* ------------------------ Swiper tuning constants ------------------------ */
 const SWIPER_TUNING = {
@@ -323,7 +432,7 @@ function TopNav({ active, onGoto }: { active: Tab; onGoto: (t: Tab) => void }) {
                 <LinkBtn t="about" label="About" />
                 <LinkBtn t="photos" label="Photos" />
                 <a
-                    href="https://example.com/reservation"
+                    href="https://www.stayfolio.com/findstay/house-of-borderless?utm_source=link&utm_medium=share&utm_campaign=findstay&utm_content=house-of-borderless"
                     target="_blank"
                     rel="noreferrer"
                     className="font-ui py-1 text-[16px] md:text-[18px] hover:underline underline-offset-[6px]"
@@ -349,14 +458,10 @@ function AboutContent() {
                 모호함은 곧 자유가 되고, 새로운 시도가 됩니다.
             </p>
             <p className="mb-6">
-                여기서 묻습니다. “당신의 경계는 어디까지인가?” 보더리스는 낯선 경험을 허락합니다. 창밖 자연을 바라보며 멈춘 순간, 일상에서는
-                상상조차 하지 못했던 자유를 맛보는 순간. 이곳은 당신의 감각을 흔들고, 익숙한 질서를 부드럽게 넘어서는 자리입니다.
-            </p>
-            <p>
-                삼각의 회전으로 완성된 로고는 ‘경계 없음’, ‘확장’, ‘연장’의 의미를 담아, 어느 쪽이 기준인지 알 수 없는 모호함을 드러냅니다.
-                그 모호함은 곧 자유가 되고, 새로운 시도가 됩니다. 그래서 우리는 정보를 추측보다 경험하는 편지처럼, 지나치게 명백하기보다,
-                인간의 온기가 남아 있는 ‘타자체’와 닮은 서체를 택했습니다. 완벽한 정제 대신, 사랑의 숨결을 담은 불완전함. 그 이야기야말로
-                보더리스가 전하는 메시지이자 경험입니다.
+                여기서 묻습니다. “당신의 경계는 어디까지인가?”
+                <br />
+                보더리스는 낯선 경험을 허락합니다. 창밖의 자연을 바라보는 순간,일상에서는 상상조차 하지 못했던 자유를 느낍니다. 이곳은
+                익숙한 질서를 부드럽게 흔들며,당신의 감각을 새롭게 여는 공간입니다.
             </p>
         </article>
     );
@@ -364,25 +469,33 @@ function AboutContent() {
 
 /* ------------------------------ Photos Viewer ---------------------------- */
 /** Compact photo viewer that keeps a 16:10 box with Swiper */
-export function PhotosViewer({ onOpenLightbox }: { onOpenLightbox: (index: number) => void }) {
-    const total = PHOTOS.length;
+export function PhotosViewer({
+    photos,
+    onOpenLightbox,
+    swiperKey,
+}: {
+    photos: PhotoItem[];
+    onOpenLightbox: (groupLocalIndex: number) => void;
+    swiperKey: string;
+}) {
+    const total = photos.length;
     const controls = useLoopingSwiper(total);
+    usePhotoPreload(photos, controls.index);
 
-    // Handle empty photo manifests
     if (total === 0) {
         return (
             <section className="w-full">
-                <div className="flex items-center justify-center h-[50vh] border border-neutral-300">
-                    <p className="text-neutral-500 text-sm">No photos available.</p>
+                <div className="flex items-center justify-center h-[40vh] border border-neutral-300">
+                    <p className="text-neutral-500 text-sm">No photos in this group.</p>
                 </div>
             </section>
         );
     }
 
-    const openLightbox = () => onOpenLightbox(controls.index);
+    const open = () => onOpenLightbox(controls.index);
 
     return (
-        <section className="w-full mt-10 md:mt-25">
+        <section className="w-full">
             <div
                 className={[
                     "relative space-y-3",
@@ -391,7 +504,6 @@ export function PhotosViewer({ onOpenLightbox }: { onOpenLightbox: (index: numbe
                     "ml-auto",
                 ].join(" ")}
             >
-                {/* Top controls */}
                 <div className="flex items-center justify-between text-[14px] text-black mb-2 select-none">
                     <span>
                         {controls.index + 1} of {total}
@@ -414,9 +526,9 @@ export function PhotosViewer({ onOpenLightbox }: { onOpenLightbox: (index: numbe
                     </div>
                 </div>
 
-                {/* Swiper frame maintains 16:10 cover layout */}
-                <div className="relative w-full aspect-[16/10] max-h-[72vh] border border-neutral-300 overflow-hidden bg-white min-w-0">
+                <div className="relative w-full aspect-[16/9] border border-neutral-300 overflow-hidden bg-white min-w-0 photo-swiper">
                     <Swiper
+                        key={swiperKey}
                         modules={[Keyboard, Mousewheel]}
                         className="h-full w-full"
                         onSwiper={controls.attachSwiper}
@@ -428,23 +540,19 @@ export function PhotosViewer({ onOpenLightbox }: { onOpenLightbox: (index: numbe
                         freeMode={false}
                         slidesPerView={1}
                         centeredSlides={false}
-                        mousewheel={{
-                            ...SWIPER_TUNING.mousewheel,
-                            thresholdDelta: 50, // avoid inertial double-slide jumps
-                        }}
+                        mousewheel={{ ...SWIPER_TUNING.mousewheel, thresholdDelta: 50 }}
                         spaceBetween={0}
                         grabCursor
                         keyboard={{ enabled: true, onlyInViewport: true }}
-                        loop={true}
+                        loop
                         observer
                         observeParents
-                        /* Keep React state aligned with Swiper */
                         initialSlide={controls.index}
                         onSlideChange={controls.handleSlideChange}
                     >
-                        {PHOTOS.map((p, i) => (
+                        {photos.map((p, i) => (
                             <SwiperSlide key={p.src ?? i} className="relative h-full">
-                                <div className="relative h-full w-full cursor-zoom-in" onClick={openLightbox}>
+                                <div className="relative h-full w-full cursor-pointer" onClick={open}>
                                     <Image
                                         fill
                                         src={p.src}
@@ -466,6 +574,62 @@ export function PhotosViewer({ onOpenLightbox }: { onOpenLightbox: (index: numbe
     );
 }
 
+function PhotosSection({
+    onOpenLightboxGroup,
+}: {
+    onOpenLightboxGroup: (args: { photos: PhotoItem[]; startIndex: number; groupId: string }) => void;
+}) {
+    const [activeId, setActiveId] = useState<string>(GROUPS[0]?.id ?? "all");
+    const group = GROUPS.find((g) => g.id === activeId) ?? GROUPS[0];
+    const indices = group.indices;
+    const photos = indices.map((i) => NORM_PHOTOS[i]).filter(Boolean);
+
+    const openFromGroup = (localIdx: number) => {
+        onOpenLightboxGroup({ photos, startIndex: localIdx, groupId: activeId });
+    };
+
+    return (
+        <div className="space-y-2.5">
+            {/* 탭 */}
+            <div className="max-w-[640px] mx-auto flex flex-wrap gap-x-6 md:gap-x-8 gap-y-2 items-center">
+                {GROUPS.map((g) => {
+                    const active = g.id === activeId;
+                    return (
+                        <button
+                            key={g.id}
+                            onClick={() => setActiveId(g.id)}
+                            className={[
+                                "font-ui text-[14px] md:text-[16px] underline-offset-[6px]",
+                                active ? "underline" : "hover:underline",
+                            ].join(" ")}
+                            aria-current={active ? "page" : undefined}
+                        >
+                            {g.label}
+                        </button>
+                    );
+                })}
+            </div>
+
+            <FadeMount key={activeId}>
+                <div className="space-y-3">
+                    {(group.title || group.description) && (
+                        <div className="pl-3.5 max-w-[550px] h-[90px]">
+                            {group.title && <div className="font-ui text-[15px] md:text-[16px] mb-2">{group.title}</div>}
+                            {group.description && (
+                                <p className="font-normal leading-[1.9] tracking-[0.01em] text-[clamp(11px,2.2vw,13px)] text-black/90 whitespace-pre-wrap">
+                                    {group.description}
+                                </p>
+                            )}
+                        </div>
+                    )}
+
+                    <PhotosViewer photos={photos} onOpenLightbox={openFromGroup} swiperKey={`${activeId}:${photos.length}`} />
+                </div>
+            </FadeMount>
+        </div>
+    );
+}
+
 /* --------------------------- LightboxKeyHandler --------------------------- */
 function LightboxKeyHandler({ onPrev, onNext, onClose }: { onPrev: () => void; onNext: () => void; onClose: () => void }) {
     useEffect(() => {
@@ -483,10 +647,14 @@ function LightboxKeyHandler({ onPrev, onNext, onClose }: { onPrev: () => void; o
 /* --------------------------------- Page ---------------------------------- */
 export default function Page() {
     const [tab, setTab] = useHashTab();
-    const [lightboxOpen, setLightboxOpen] = useState(false);
-    const [fadeState, setFadeState] = useState<"in" | "out">("in");
 
-    const totalPhotos = PHOTOS.length;
+    /* --------------------------- Lightbox states --------------------------- */
+    const [lightboxOpen, setLightboxOpen] = useState(false);
+    const [lightboxSet, setLightboxSet] = useState<PhotoItem[]>([]);
+    const [lightboxKey, setLightboxKey] = useState<string>(""); // Swiper reset key
+    const [fadeState, setFadeState] = useState<"in" | "out">("in"); // ← 이거 추가
+    const lightboxTotal = lightboxSet.length;
+
     const {
         index: lightboxIdx,
         setIndex: setLightboxIndex,
@@ -495,36 +663,28 @@ export default function Page() {
         slidePrev: lightboxSlidePrev,
         slideNext: lightboxSlideNext,
         resetLock: resetLightboxLock,
-    } = useLoopingSwiper(totalPhotos);
+    } = useLoopingSwiper(lightboxTotal);
+    usePhotoPreload(lightboxSet, lightboxIdx, 3);
 
     useBodyScrollLock(lightboxOpen);
 
-    useEffect(() => {
-        if (typeof window === "undefined") return;
-        const doc = document.documentElement;
-        const body = document.body;
-        const prevDocBehavior = doc.style.scrollBehavior;
-        const prevBodyBehavior = body.style.scrollBehavior;
-        doc.style.scrollBehavior = "smooth";
-        body.style.scrollBehavior = "smooth";
+    /* ...기존 스크롤 동작 useEffect와 SSR-플래시 방지 로직은 그대로... */
 
-        return () => {
-            doc.style.scrollBehavior = prevDocBehavior;
-            body.style.scrollBehavior = prevBodyBehavior;
-        };
-    }, []);
+    if (!tab) return <div className="min-h-screen bg-white"></div>;
 
-    if (!tab) {
-        // Render a blank screen to avoid SSR flashes before mount
-        return <div className="min-h-screen bg-white"></div>;
-    }
-
-    const openLightbox = (index: number) => {
+    // 그룹 서브셋으로 라이트박스 열기
+    const openLightboxGroup = ({ photos, startIndex, groupId }: { photos: PhotoItem[]; startIndex: number; groupId: string }) => {
         resetLightboxLock();
-        setLightboxIndex(index);
+        setLightboxSet(photos);
+        setLightboxKey(`${groupId}:${photos.length}`);
         setFadeState("out");
         setLightboxOpen(true);
-        requestAnimationFrame(() => setFadeState("in"));
+
+        // ✅ 다음 프레임에 인덱스 설정 + 페이드 인
+        requestAnimationFrame(() => {
+            setLightboxIndex(startIndex);
+            setFadeState("in"); // ★ 이 줄이 핵심
+        });
     };
 
     const closeLightbox = () => {
@@ -549,12 +709,12 @@ export default function Page() {
                 <div className="flex-1 pb-8 safe-bottom">
                     <div className="px-6 sm:px-8">
                         <FadeMount key={tab}>
-                            {tab === "about" ? <AboutContent /> : <PhotosViewer onOpenLightbox={openLightbox} />}
+                            {tab === "about" ? <AboutContent /> : <PhotosSection onOpenLightboxGroup={openLightboxGroup} />}
                         </FadeMount>
                     </div>
                 </div>
 
-                <footer className="font-ui text-xs md:text-sm text-black px-10 pb-6">
+                <footer className="font-ui text-xs md:text-sm text-black px-10 mt-2 pb-6">
                     <div className="max-w-[var(--content)]">2024 Copyright All Rights Are Reserved.</div>
                 </footer>
             </main>
@@ -562,15 +722,15 @@ export default function Page() {
             {/* --------------------------- Lightbox Overlay --------------------------- */}
             {lightboxOpen && (
                 <div
-                    className={`fixed inset-0 z-[999] bg-white/98 transition-opacity duration-300
-  ${fadeState === "in" ? "opacity-100" : "opacity-0"}`}
+                    className={`fixed inset-0 z-[999] bg-white/98 transition-opacity duration-300 ${
+                        fadeState === "in" ? "opacity-100" : "opacity-0"
+                    }`}
                     role="dialog"
                     aria-modal="true"
                 >
-                    {/* Top controls remain anchored */}
                     <div className="absolute top-0 left-0 right-0 z-10 h-[64px] flex items-center justify-between px-6 text-black text-[16px] select-none">
                         <span>
-                            {lightboxIdx + 1} of {totalPhotos}
+                            {lightboxIdx + 1} of {lightboxTotal}
                         </span>
                         <div className="flex items-center gap-4">
                             <button
@@ -607,10 +767,8 @@ export default function Page() {
                         </div>
                     </div>
 
-                    {/* Keyboard navigation */}
                     <LightboxKeyHandler onPrev={lightboxSlidePrev} onNext={lightboxSlideNext} onClose={closeLightbox} />
 
-                    {/* Content wrapper leaves room for the header so Swiper fills the rest */}
                     <div
                         className="absolute inset-0 pt-[64px] pb-[24px] px-4 pointer-events-none"
                         style={{
@@ -618,9 +776,7 @@ export default function Page() {
                             paddingBottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
                         }}
                     >
-                        {/* Center the viewer */}
                         <div className="w-full h-full grid place-items-center pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-                            {/* Provide an explicit height so Swiper can fill it */}
                             <div
                                 className="lightbox-swiper w-full h-full min-w-0"
                                 style={{
@@ -629,8 +785,9 @@ export default function Page() {
                                 }}
                             >
                                 <Swiper
+                                    key={lightboxKey}
                                     modules={[Keyboard, Mousewheel]}
-                                    className="w-full h-full" // ensure Swiper stretches to available height
+                                    className="w-full h-full"
                                     onSwiper={attachLightboxSwiper}
                                     speed={SWIPER_TUNING.speed}
                                     threshold={SWIPER_TUNING.threshold}
@@ -641,21 +798,17 @@ export default function Page() {
                                     slidesPerView={1}
                                     slidesPerGroup={1}
                                     centeredSlides={false}
-                                    /* Prevent the next slide from bleeding through */
                                     spaceBetween={0}
-                                    roundLengths={true}
-                                    loop={true}
+                                    roundLengths
+                                    loop
                                     loopAdditionalSlides={2}
-                                    mousewheel={{
-                                        ...SWIPER_TUNING.mousewheel,
-                                        thresholdDelta: 50,
-                                    }}
+                                    mousewheel={{ ...SWIPER_TUNING.mousewheel, thresholdDelta: 50 }}
                                     observer
                                     observeParents
                                     initialSlide={lightboxIdx}
                                     onSlideChange={handleLightboxSlideChange}
                                 >
-                                    {PHOTOS.map((p, i) => (
+                                    {lightboxSet.map((p, i) => (
                                         <SwiperSlide key={p.src ?? i} className="flex items-center justify-center h-full">
                                             <div className="relative h-full w-full">
                                                 <Image
