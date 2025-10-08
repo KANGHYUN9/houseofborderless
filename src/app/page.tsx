@@ -613,7 +613,7 @@ function PhotosSection({
             <FadeMount key={activeId}>
                 <div className="space-y-3">
                     {(group.title || group.description) && (
-                        <div className="pl-3.5 max-w-[550px] h-[90px]">
+                        <div className="mx-auto max-w-[640px] max-w-[550px] h-[90px]">
                             {group.title && <div className="font-ui text-[15px] md:text-[16px] mb-2">{group.title}</div>}
                             {group.description && (
                                 <p className="font-normal leading-[1.9] tracking-[0.01em] text-[clamp(11px,2.2vw,13px)] text-black/90 whitespace-pre-wrap">
